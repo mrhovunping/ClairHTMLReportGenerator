@@ -1,0 +1,134 @@
+# .NET Desktop
+# Build and run tests for .NET Desktop or Windows classic desktop solutions.
+# Add steps that publish symbols, save build artifacts, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/apps/windows/dot-net
+# to publish documentation : https://kvaes.wordpress.com/2018/06/13/generating-a-docs-website-powered-by-git-markdown/
+resources:
+  repositories:
+  - repository: scripts
+    type: git
+    name: Moon CI Process/ci-scripts
+
+# CI build trigger
+trigger:
+  branches:
+    include:
+    - development
+    - sprint-*
+    - hotfix-*
+    - release-*
+  paths:
+    exclude:
+    - .cicd/*
+
+# PR build trigger
+pr: none
+
+# We can run multiple jobs in parallel. For this project
+# I'm running Linux, Windows, and macOS jobs. For syntac details
+# see https://docs.microsoft.com/en-us/azure/devops/pipelines/process/phases
+jobs:
+
+- job: WindowsAgent
+  pool:
+    name: TracePartsWindows10PhysicalPool
+  timeoutInMinutes: 120
+  cancelTimeoutInMinutes: 2
+  steps:
+  - checkout: self
+    persistCredentials: true
+    path: s/project
+    clean: true
+  - checkout: scripts
+    clean: true
+
+  - powershell: |
+
+     # Create folder
+     New-Item -ItemType Directory -Force -Path "$(Agent.BuildDirectory)/s/project/.cicd"
+     # Add cake element
+     Copy-Item "$(Agent.BuildDirectory)/s/ci-scripts/dotnetcore/*" "$(Agent.BuildDirectory)/s/project/.cicd/" -Recurse -Force
+
+  - task: PowerShell@2
+    displayName: 'Global variable initialiser'
+    inputs:
+      targetType: filePath
+      filePath: "$(Agent.BuildDirectory)/s/project/.cicd/azure/globalparameters.ps1"
+      arguments: $(build.SourceBranchName)
+      errorActionPreference: silentlyContinue
+    name: setV
+
+  - task: PowerShell@2
+    displayName: 'CI process using Cake'
+    inputs:
+      targetType: filePath
+      filePath: "$(Agent.BuildDirectory)/s/project/.cicd/cake/build.ps1"
+      arguments: -Script '$(Agent.BuildDirectory)/s/project/.cicd/cake/build.cake' -Target 'CI-Create-Desktop-App' -ScriptArgs ' --configuration="$(build.configuration)" --settings_skipverification=true --BUILD_NUGET_SOURCE="$(build.nuget.source)" --SYSTEM_ACCESSTOKEN="$(System.AccessToken)" --BUILD_SOURCEBRANCHNAME="$(build.SourceBranchName)" --BUILD_DESCRIPTION="$(system.teamProject) solution" --BUILD_VERSION="$(setV.build.version)" --BUILD_CONTAINER_TYPE="$(build.container.type)" --BUILD_BUILDID="$(Build.BuildId)" --BUILD_BUILDURI="$(Build.BuildUri)" --BUILD_BUILDNUMBER="$(Build.BuildNumber)" --BUILD_DEFINITIONNAME="$(Build.DefinitionName)" --BUILD_REASON="$(Build.Reason)" --BUILD_REPOSITORY_URI="$(Build.Repository.Uri)" --BUILD_SOURCEBRANCH="$(Build.SourceBranch)" --BUILD_SOURCESDIRECTORY="$(Build.SourcesDirectory)\project" --BUILD_SOURCEVERSION="$(Build.SourceVersion)"'
+      errorActionPreference: silentlyContinue
+
+  - task: PowerShell@2
+    displayName: 'Clean up agent'
+    inputs:
+      targetType: filePath
+      filePath: $(Agent.BuildDirectory)/s/project/.cicd/cake/build.ps1
+      arguments: -Script '$(Agent.BuildDirectory)/s/project/.cicd/cake/build.cake' -Target 'CleanAgent' -ScriptArgs '--settings_skipverification=true'
+      errorActionPreference: silentlyContinue
+    condition: or (canceled(), failed()) # this step will always run, even if the pipeline is canceled or failed
+
+  - powershell: |
+      # Push new tag
+      cd "$(Agent.BuildDirectory)/s/project"
+      git push origin "$(setV.build.version)"
+
+    errorActionPreference: silentlyContinue
+    displayName: 'Push tag branch'
+
+  - task: richardfennellBM.BM-VSTS-GenerateReleaseNotes-Task.Generate-Release-Notes.GenerateReleaseNotes@3
+    displayName: 'Generate release notes (PowerShell)'
+    inputs:
+      outputfile: '$(Agent.BuildDirectory)/s/project/releasenotes.md'
+      templateLocation: InLine
+      inlinetemplate: |
+       #Release notes for build $defname
+       **Build Number**  : $($build.buildnumber)
+       **Build started** : $("{0:dd/MM/yy HH:mm:ss}" -f [datetime]$build.startTime)
+       **Source Branch** : $($build.sourceBranch)
+       ###Associated change sets/commits
+       @@CSLOOP@@
+       * **ID $($csdetail.changesetid)$($csdetail.commitid)** $($csdetail.comment)
+       @@CSLOOP@@
+
+  - powershell: |
+       # Get content of releasenotes
+       Write-Host("content = [IO.File]::ReadAllText(""$(Agent.BuildDirectory)/s/project/releasenotes.md"")")
+       $content = [IO.File]::ReadAllText("$(Agent.BuildDirectory)/s/project/releasenotes.md")
+       # Concat the URI
+       $uri = "$(build.wiki.uri)" + "$(build.wiki.path)" +"$(setV.build.version)"
+       Write-Host("$uri")
+       # Convert to json for Wiki API
+       $data = @{content=$content;} | ConvertTo-Json;
+       Write-Host("$data")
+       Write-Host("PAT = $(build.wiki.basicB64Token)");
+       $B64Pat = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(":$(build.wiki.basicB64Token)"))
+       Write-Host("PAT64 = $B64Pat")
+       # Set Request
+       $params = @{uri = "$($uri)";
+         Method = 'PUT';
+         Headers = @{Authorization = "Basic $($B64Pat)" };
+         ContentType = "application/json";
+         Body = $data;
+       }
+       Write-Host("param = $params")
+       # Call
+       Write-Host("Invoke-WebRequest @params -UseBasicParsing")
+       Invoke-WebRequest @params -UseBasicParsing
+
+    errorActionPreference: silentlyContinue
+    displayName: 'Publish release note into project wiki'
+
+  - task: PublishTestResults@2
+    inputs:
+      testResultsFormat: VSTest
+      searchFolder: "$(Agent.BuildDirectory)/s/project/.cicd"
+      testResultsFiles: '**/*.trx'
+    displayName: 'Publish test results'

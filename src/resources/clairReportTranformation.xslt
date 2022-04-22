@@ -609,7 +609,7 @@
 
                     <h3 class="layer__title" >Details of vulnerabilities</h3>
 
-                    <xsl:if test=" $countUnknown != 0">
+                    <xsl:if test=" $countVulnerability != 0">
                     <div class="features">
                       <ul>
                         <li class="feature">
@@ -634,7 +634,7 @@
                     </div>
                     </xsl:if>
 
-                    <xsl:if test=" $countUnknown = 0">
+                    <xsl:if test=" $countVulnerability = 0">
                       <div class="features">
                         <ul>
                           <li class="feature">

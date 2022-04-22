@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Runtime.Serialization.Json;
-using System.Text;
-
-namespace ClairHTMLReportGenerator
+﻿namespace ClairHTMLReportGenerator
 {
     /// <summary>
     /// This interface is used to implement a generate HTML document

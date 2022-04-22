@@ -1,0 +1,13 @@
+﻿# IntelliJ project files
+.idea
+*.iml
+out
+gen
+
+.vs
+ClairHTMLReportGenerator.test/bin
+ClairHTMLReportGenerator.test/obj
+src/bin
+src/obj
+test/obj
+test/bin
